@@ -1,0 +1,111 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          Firewall maison
+# Required-Start:    $local_fs $remote_fs $network $syslog
+# Required-Stop:     $local_fs $remote_fs $network $syslog
+# Default-Start:
+# Default-Stop:
+# X-Interactive:     false
+# Short-Description: Parfeu
+### END INIT INFO
+
+# Mise à nu
+iptables -t filter -F
+iptables -t filter -X
+echo "Mise à nu[ON]"
+
+# On interdit tout
+iptables -t filter -P INPUT DROP
+iptables -t filter -P FORWARD DROP
+iptables -t filter -P OUTPUT DROP
+echo "tout est interdit[ON]"
+
+# Ne pas casser les connexions établies
+iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+# Autorise le loopback (127.0.0.1)
+iptables -t filter -A INPUT -i lo -j ACCEPT
+iptables -t filter -A OUTPUT -o lo -j ACCEPT
+echo "Loopback[ON]"
+
+# ICMP (le ping)
+iptables -t filter -A INPUT -p icmp -j ACCEPT
+iptables -t filter -A OUTPUT -p icmp -j ACCEPT
+
+# DNS In/Out
+iptables -t filter -A OUTPUT -p tcp --dport 53 -j ACCEPT
+iptables -t filter -A OUTPUT -p udp --dport 53 -j ACCEPT
+iptables -t filter -A INPUT -p tcp --dport 53 -j ACCEPT
+iptables -t filter -A INPUT -p udp --dport 53 -j ACCEPT
+echo "DNS [ON]"
+
+# NTP Out
+iptables -t filter -A OUTPUT -p udp --dport 123 -j ACCEPT
+echo "NTP [ON]"
+
+# HTTP + HTTPS Out
+iptables -t filter -A OUTPUT -p tcp --dport 80 -j ACCEPT
+iptables -t filter -A OUTPUT -p tcp --dport 443 -j ACCEPT
+
+# HTTP + HTTPS In
+iptables -t filter -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -t filter -A INPUT -p tcp --dport 443 -j ACCEPT
+iptables -t filter -A INPUT -p tcp --dport 8443 -j ACCEPT
+echo "HTTP [ON]"
+
+
+#Limitation du flood
+iptables -A FORWARD -p tcp --syn -m limit --limit 1/second -j ACCEPT
+iptables -A FORWARD -p udp -m limit --limit 1/second -j   ACCEPT
+iptables -A FORWARD -p icmp --icmp-type echo-request -m limit --limit 1/second -j   ACCEPT
+echo "Limite de flood [ON]"
+
+#Limitation du scan de ports
+iptables -A FORWARD -p tcp --tcp-flags SYN,ACK,FIN,RST RST -m limit --limit 1/s -j   ACCEPT
+echo "Scan de port [ON]"
+
+# Limit the number of incoming tcp connections
+# Interface 0 incoming syn-flood protection
+iptables -N syn_flood
+iptables -A INPUT -p tcp --syn -j syn_flood
+iptables -A syn_flood -m limit --limit 1/s --limit-burst 3 -j RETURN
+iptables -A syn_flood -j DROP
+#Limiting the incoming icmp ping request: 
+iptables -A INPUT -p icmp -m limit --limit  1/s --limit-burst 1 -j ACCEPT
+
+iptables -A INPUT -p icmp -m limit --limit 1/s --limit-burst 1 -j LOG --log-prefix PING-DROP:
+iptables -A INPUT -p icmp -j DROP
+
+iptables -A OUTPUT -p icmp -j ACCEPT
+echo "Limite ICMP [ON]"
+
+#SYN packets check
+iptables -A INPUT -p tcp ! --syn -m state --state NEW -j DROP
+echo "syn check [ON]"
+
+#force fragments packets check
+iptables -A INPUT -f -j DROP
+echo " fragments packets check [ON]"
+
+#XMAS packets
+iptables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
+echo "XMAS [ON]"
+
+#drop all NULL packets
+iptables -A INPUT -p tcp --tcp-flags ALL NONE -j DROP
+echo "DROP ALL NULL [ON]"
+
+#LImite les paquets syn
+iptables -A INPUT -p tcp --syn -m limit --limit 10/s --limit-burst 13 -j DROP
+echo "limite les syn [ON]"
+
+#logs ip qui flood
+iptables -N flood
+iptables -A flood -j LOG --log-prefix "FLOOD "
+iptables -A flood -j DROP
+echo "logs [ON]"
+
+
+# Sauvegarder les regles pour qu elles soient chargees si reboot
+iptables-save -c > /etc/iptables-save
